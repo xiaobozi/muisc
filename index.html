@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <link rel="stylesheet" href="./index.css">
+    <title>Document</title>
+    <style>
+        
+    </style>
+</head>
+<body>
+    <div id="app" >
+        <zl-head></zl-head>
+        <zl-main></zl-main>
+        <zl-footer></zl-footer>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script>
+        axios.defaults.baseURL = 'https://apimusic.linweiqin.com/';
+        const bus=new Vue()
+        Vue.directive('loading',function(el,binding){
+            el.style.display=binding.value?'block':'none'
+            el.parentNode && (el.parentNode.style='position: relative;')    
+            el.classList.add('loading')
+        })
+        Vue.component('zl-head',{
+            template:`
+                <header>
+                    <p>泽林</p>
+                    <div class='searchBox'>
+                        <input type='text' @keyup.enter='searchFn' v-model='searchBox'
+                        placeholder='搜索歌曲'>    
+                    </div>
+                </header>`,
+            data(){
+                return {
+                    searchBox : '',
+                }
+            },
+            methods: {
+                searchFn(){
+                    this.$root.searchBox = this.searchBox
+                    bus.$emit('setLoading',true)
+                    axios.get('/search?keywords='+this.searchBox).then(res=>{
+                        let {data,status} = res
+                        bus.$emit('setLoading',false)
+                        status == 200 && bus.$emit('getSongs',data.result.songs,true)
+                        this.searchBox=''
+                    })
+                }
+            },
+        })
+        Vue.component('songs',{
+            template:`
+                <div class='songs'>
+                    <p class='p2' v-show='songs.length'>
+                        <span class='result'>搜索结果</span>
+                        <span class='prev' @click='prevPage'>上一页</span>
+                        <span class='page'>{{page + 1}}</span>
+                        <span class='next' @click='nextPage'>下一页</span>
+                    </p>
+                    <i class="iconfont icon-loading" v-loading='flag'></i>
+                    <ul>
+                        <li v-for='song,index in songs' :key='index' class='songs-list' @click='play(song.id,true)'>
+                            <i @click.stop='play(song.id)'></i>
+                            <span style='max-width: 20em;'>{{song.name}}
+                                <span class='singer'>{{song.artists[0].name}}</span>
+                            </span>
+                            <i  class='mv' v-if="song.mvid!=0" @click='showMv(song)'></i>
+                        </li>
+                    </ul>
+                    <img src="images/line.png">
+                </div>
+            `,
+            data(){
+                return {
+                    songs :[],
+                    page : 0,
+                    flag:false
+                }
+            },
+            created() {
+                bus.$on('getSongs',(v,newSearch) => {
+                    this.songs =v
+                    newSearch && (this.page =0)
+                })
+                bus.$on('setLoading',v => this.flag =v)
+            },
+            methods:{
+                play:async function(musicId,ismv){
+                    this.$root.musicId=musicId
+                    bus.$emit('setLoadingComment',true)
+                    let response = await axios.get('https://api.imjad.cn/cloudmusic/?type=lyric&id='+musicId)
+                    let response2 = await axios.get('/song/detail?ids=' + musicId)
+                    let response3 = await axios.get('/song/url?id=' + musicId)
+                    let response4 = await axios.get('/comment/hot?type=0&id=' + musicId)
+                    bus.$emit('setLoadingComment',false)
+                    if(response.data.lrc){
+                        let lyric = formatLyric(response.data.lrc.lyric)
+                        bus.$emit('fn',lyric)
+                    }else{
+                        bus.$emit('fn',[{text:'暂无歌词',msg: false}])
+                    }
+                    bus.$emit('getCover',response2.data.songs[0].al.picUrl)
+                    bus.$emit('getMusicUrl',response3.data.data[0].url)
+                    bus.$emit('getHotComments',response4.data.hotComments,true)
+                    ismv && bus.$emit('stop')
+                },
+                showMv(song){
+                    this.play(song.id,true)
+                    axios.get('/mv/url?id=' + song.mvid).then(response => {
+                        bus.$emit('getMvUrl',response.data.data.url)
+                    })
+                },
+                prevPage(){
+                    if(!this.page)return;
+                    let page = this.page
+                    axios.get(`/search?keywords=${this.$root.searchBox}&offset=${--page *30}`).then(res=>{
+                            let {data,status} = res
+                            status == 200 && bus.$emit('getSongs',data.result.songs)
+                            this.page = page
+                        })
+                },
+                nextPage(){
+                    let page = this.page
+                    axios.get(`/search?keywords=${this.$root.searchBox}&offset=${++page *30}`).then(res=>{
+                            let {data,status} = res
+                            status == 200 && bus.$emit('getSongs',data.result.songs)
+                            this.page = page
+                        })
+                },
+            }
+        })
+        Vue.component('palyer',{
+            template:`
+                <div class='palyer'>
+                    <img src="images/player_bar.png" :class="['play_bar',{paly:$root.isPaly}]" @click='showMusic'/>
+                    <img src="images/disc.png" :class="['disc','autoRotate',isStart]"  @click='showlyric'
+                    />
+                    <img :src='cover' :class="['cover','autoRotate',isStart]" @click='showlyric'
+                    />
+                </div>
+            `,
+            data(){
+                return {
+                    cover : './images/cover.png',
+                    flag : false
+                }
+            },
+            computed: {
+                isStart(){
+                    return  this.flag ? 'active' : 'paused'
+                }
+            },
+            methods:{
+                showMusic(){
+                    if(this.$root.isPaly === '')return;
+                    bus.$emit(this.$root.isPaly?'stop':'start')
+                },
+                showlyric(){
+                    if(this.$root.isPaly === '')return
+                    this.$parent.showlyric = true
+                }
+            },
+            created() {
+                bus.$on('getCover',cover=> {this.cover = cover})
+                bus.$on('setFlag',v=> {this.flag = v})
+            }, 
+        })
+        Vue.component('comment',{
+            template:`
+                <div class='comments'>
+                    <img src="images/line.png" class='img'> 
+                    <i class="iconfont icon-loading" v-loading='flag'></i>
+                    <p v-show='comments' class='p1'>
+                        <span class='hot' >热门留言</span>
+                        <span class='prev' @click='prevPage'>上一页</span>    
+                        <span class='prev' style='color: chocolate;border: none;'>{{page + 1}}</span>    
+                        <span class='next' @click='nextPage'>下一页</span>    
+                    </p>
+                    <ul>
+                        <li class='comments-list' v-for='list,index in comments' :key='index'>
+                            <img class='left' :src='list.user.avatarUrl'></img>
+                            <div class='right'>
+                                <p class='admin'>{{list.user.nickname}}</p>
+                                <p class='text'>{{list.content}}</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            `,
+            data(){
+                return {comments:'',page:0,flag:false,}
+            },
+            methods:{
+                prevPage(){
+                    if(!this.page)return
+                    let page = this.page
+                    axios.get(`/comment/hot?type=0&id=${this.$root.musicId}&offset=${--page *30}` ).then(response => {
+                        bus.$emit('getHotComments',response.data.hotComments)
+                        this.page = page
+                    })
+                },
+                nextPage(){
+                    let page = this.page
+                    axios.get(`/comment/hot?type=0&id=${this.$root.musicId}&offset=${++page *30}`).then(response => {
+                        if(response.data.hotComments.length){
+                            this.page = page 
+                            bus.$emit('getHotComments',response.data.hotComments)
+                        }
+                    })
+                }
+            },
+            created(){
+                bus.$on('getHotComments',(comments,newsong) => {
+                    this.comments =comments
+                    newsong && (this.page = 0)
+                    console.log(newsong)
+                })
+                bus.$on('setLoadingComment',v => {this.flag =v})
+            },
+           
+        })
+        Vue.component('lyric',{
+            template:`
+                <div class='lyric' @click='showpalyer($event)' ref='lyric'>
+                    <div class="container">
+                        <div class="show" ref='showDiv' v-if='data[0].msg'>
+                            <p class='active'>{{data[0].text}}</p>
+                        </div>
+                        <div class="show" ref='showDiv' v-else>
+                            <p v-for='v,i in data' :key='i'
+                            :class='{active:currentNow === i}'
+                            @click='setTime(v.time)'>{{v.text}}</p>
+                        </div>
+                    </div>
+                </div>
+            `,
+            data(){
+                return {
+                    data :[{text:'暂无歌词',msg: false}],
+                    currentNow:0
+                }
+            },
+            methods:{
+                showpalyer(e){
+                    if(e.target.nodeName != "P" && e.target.className != "container"){
+                        this.$parent.showlyric=false
+                    }
+                },
+                setTime(time){
+                    bus.$emit('setTime',time)
+                }
+            },
+            created(){
+                bus.$on('fn',v=>this.data=v)
+                bus.$on('currentNow',v=>this.currentNow=v)
+                bus.$on('setTop',v=>{
+                    let heigth = this.$refs.showDiv.offsetHeight / this.data.length
+                    this.$refs.lyric.scrollTop= v * heigth 
+                })
+            },
+        })
+        Vue.component('zl-main',{
+            template:`
+                <div class='main'>
+                    <songs></songs>
+                    <palyer v-show='!showlyric'></palyer>
+                    <lyric v-show='showlyric'></lyric>
+                    <comment ></comment>
+                </div>
+            `,
+            data(){
+                return {showlyric:false}
+            }
+        })
+        Vue.component('zl-footer',{
+            template:`
+                <footer>
+                    <audio :src=url controls autoplay  class="myaudio" 
+                    @play="paly" @pause="pause" ref='audio' @timeupdate="updateTime"
+                    @ended='musicEnd'
+                    ></audio>
+                    <div class="video_con" v-show="mvUrl">
+                        <video ref='video' :src="mvUrl" controls autoplay @mouseenter='close=false'
+                        @mouseleave='close=true'
+                        ></video>
+                        <div class="mask" @click="closeMv"></div>
+                        <div :class="['shutoff',{transparen:close}]" @click='closeMv'></div>
+                    </div>
+                </footer>
+            `,
+            data(){
+                return {url:'',mvUrl:'',close:true,time:0,data:[]}
+            },
+            methods:{   
+                paly(){
+                    this.$root.isPaly=true
+                },
+                pause(){
+                    this.$root.isPaly=false
+                },
+                closeMv(){
+                    this.mvUrl=''
+                },
+                updateTime(){
+                    this.time = this.$refs.audio.currentTime
+                },
+                musicEnd(){
+                    bus.$emit('setTop',0)
+                    bus.$emit('currentNow',0)
+                    this.$refs.audio.play()
+                }
+            },
+            watch:{
+                time(now){
+                    let flag = false
+                    if(now <this.data[0].time){
+                        bus.$emit('setTop',0)
+                        return
+                    }
+                    console.log(1)
+                    bus.$emit('currentNow',this.data.length-1)
+                    this.data.forEach((e, i) => {
+                    if(flag)return
+                    if(i === this.data.length-1){
+                        bus.$emit('setTop',this.data.length-4)
+                    }else{
+                        if (e.time  <= now && now <= this.data[i+1].time ) {
+                            i >4 && bus.$emit('setTop',i -4)
+                            bus.$emit('currentNow',i)
+                            flag = true
+                        }
+                    }
+                    });
+                }
+            },
+            created(){
+                bus.$on('getMusicUrl',url => this.url =url)
+                bus.$on('getMvUrl',url => this.mvUrl =url)
+                bus.$on('stop',() => {
+                    this.$nextTick(()=>{
+                        this.$parent.isPaly = false
+                        this.$refs.audio.pause()
+                    })
+                })
+                bus.$on('start',() => this.$refs.audio.play())
+                bus.$on('fn',v=>this.data=v)
+                bus.$on('setTime',v=>this.$refs.audio.currentTime=v + 0.1)
+                
+            },
+            
+        })
+        const vm=new Vue({
+            el:'#app',
+            data:{
+                isPaly:'',
+                musicId:'',
+                searchBox:''
+            },
+            watch: {
+                isPaly(v){
+                    setTimeout(()=>{
+                        bus.$emit('setFlag',v)
+                    },1000)
+                }
+            },
+        });
+        function formatLyric(text) {
+            let lyric = []
+            let arr = text.split("\n"); //原歌词文本已经换好行了方便很多，我们直接通过换行符“\n”进行切割
+            for (let i = 0; i < arr.length-1; i++) {
+                let temp_arr = arr[i].split("]"); //我们可以通过“]”对时间和文本进行分离
+                let text = temp_arr.pop(); //把歌词文本从数组中剔除出来，获取到歌词文本了！
+                let time=temp_arr[0].slice(2).split(":")
+                time = (time[0] * 60) + +time[1]
+                text && lyric.push({time,text})
+            }
+            lyric.sort((a,b)=>a.time - b.time); //由于不同时间的相同歌词我们给排到一起了，所以这里要以时间顺序重新排列一下
+            return lyric
+        }
+        
+   </script>
+</body>
+
+</html>

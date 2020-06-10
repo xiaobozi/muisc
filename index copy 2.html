@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <link rel="stylesheet" href="./index.css">
+    <title>Document</title>
+    <style>
+        
+    </style>
+</head>
+<body>
+    <div id="app" >
+        <zl-head></zl-head>
+        <zl-main></zl-main>
+        <zl-footer></zl-footer>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="../my-headlines/node_modules/axios/dist/axios.js"></script>
+    <script>
+        let Axios = axios.create({
+            baseURL: 'https://apimusic.linweiqin.com/',
+        })
+        Axios.interceptors.response.use(res=>{
+            document.querySelector("#loadingMask").remove()
+            return res.data
+        },err=>Promise.reject(err))
+        Axios.interceptors.request.use(config=>{
+            let div = document.createElement('div')
+            div.setAttribute('id','loadingMask')
+            div.classList.add('iconfont')
+            div.classList.add('icon-loading')
+            document.body.appendChild(div)
+            return config
+        },err=>Promise.reject(err))
+        let store = Vue.observable({
+            searchBox : '',//搜索框的绑定
+            songs :[],//当前搜索结果的歌曲列表
+            songPage : 0,//歌曲列表的第一页
+            cover : './images/cover.png',//封面路径
+            rotateFlag : false,//黑胶碟的旋转暂停
+            comments:'',//当前歌曲的评论列表
+            commentPage:0,//当前评论列表的第一页
+            lyricData :[{text:'暂无歌词',msg: false}],//当前歌曲的歌词
+            currentNow:0,//当前的高亮歌词
+            showLyric:false,//是否展示歌词
+            url:'',//歌曲的音频路径
+            mvUrl:'',//歌曲的mv路径
+            close:true,//是否展示mv的×按钮
+            isPaly:'',//当前歌曲是否播放
+            musicId:'',//当前歌曲的id
+            aodio:''//音频对象
+        })
+        Vue.component('zl-head',{
+            template:`
+                <header>
+                    <p>泽林</p>
+                    <div class='searchBox'>
+                        <input type='text' @keyup.enter='searchFn' v-model='searchBox'
+                        placeholder='搜索歌曲'>    
+                    </div>
+                </header>`,
+            data() {
+                return {
+                    searchBox:''
+                }
+            },
+            methods: {
+                searchFn(){
+                    store.searchBox=this.searchBox
+                    Axios.get('/search?keywords='+this.searchBox).then(res=>{
+                        store.songs = res.result.songs
+                        store.songPage=0
+                        this.searchBox=''
+                    })
+                }
+            },
+        })
+        Vue.component('songs',{
+            template:`
+                <div class='songs'>
+                    <p class='p2' v-show='songs.length'>
+                        <span class='result'>搜索结果</span>
+                        <span class='prev' @click='prevPage'>上一页</span>
+                        <span class='page'>{{page + 1}}</span>
+                        <span class='next' @click='nextPage'>下一页</span>
+                    </p>
+                    <ul>
+                        <li v-for='song,index in songs' :key='index' class='songs-list' @click='play(song.id,true)'>
+                            <i @click.stop='play(song.id)'></i>
+                            <span style='max-width: 20em;'>{{song.name}}
+                                <span class='singer'>{{song.artists[0].name}}</span>
+                            </span>
+                            <i  class='mv' v-if="song.mvid!=0" @click='showMv(song)'></i>
+                        </li>
+                    </ul>
+                    <img src="images/line.png">
+                </div>
+            `,
+            computed: {
+                songs(){return store.songs},
+                page(){return store.songPage},
+            },
+            methods:{
+                play:async function(musicId,isStop){
+                    store.musicId=musicId
+                    let response = await Axios.get('https://api.imjad.cn/cloudmusic/?type=lyric&id='+musicId)
+                    let response2 = await Axios.get('/song/detail?ids=' + musicId)
+                    let response3 = await Axios.get('/song/url?id=' + musicId)
+                    let response4 = await Axios.get('/comment/hot?type=0&id=' + musicId)
+                    store.lyricData = response.lrc?formatLyric(response.lrc.lyric):[{text:'暂无歌词',msg: false}]
+                    store.currentNow=0
+                    store.cover=response2.songs[0].al.picUrl
+                    store.url=response3.data[0].url
+                    store.comments=response4.hotComments
+                    store.commentPage=0
+                    if(isStop){
+                        store.isPaly = false
+                        store.audio.pause()
+                    }
+                },
+                showMv(song){
+                    this.play(song.id,true)
+                    Axios.get('/mv/url?id=' + song.mvid).then(response => {
+                        store.mvUrl = response.data.url
+                    })
+                },
+                prevPage(){
+                    if(!this.page)return;
+                    let page = this.page
+                    Axios.get(`/search?keywords=${store.searchBox}&offset=${--page *30}`).then(res=>{
+                            store.songs = res.result.songs
+                            store.songPage = page
+                        })
+                },
+                nextPage(){
+                    let page = this.page
+                    Axios.get(`/search?keywords=${store.searchBox}&offset=${++page *30}`).then(res=>{
+                            store.songs = res.result.songs
+                            store.songPage = page
+                        })
+                },
+            }
+        })
+        Vue.component('palyer',{
+            template:`
+                <div class='palyer'>
+                    <img src="images/player_bar.png" :class="['play_bar',{paly:isPaly}]" @click='showMusic'/>
+                    <img src="images/disc.png" :class="['disc','autoRotate',isStart]"  @click='showlyric'
+                    />
+                    <img :src='cover' :class="['cover','autoRotate',isStart]" @click='showlyric'
+                    />
+                </div>
+            `,
+            computed: {
+                flag(){return store.rotateFlag},
+                cover(){return store.cover},
+                isStart(){return  this.flag ? 'active' : 'paused'},
+                isPaly(){return store.isPaly},
+            },
+            methods:{
+                showMusic(){
+                    if(this.isPaly === '')return;
+                    console.lyricData
+                    this.isPaly?store.audio.pause():store.audio.play()
+                },
+                showlyric(){
+                    if(this.isPaly === '')return;
+                    store.showLyric = true
+                }
+            },
+        })
+        Vue.component('comment',{
+            template:`
+                <div class='comments'>
+                    <img src="images/line.png" class='img'> 
+                    <p v-show='comments' class='p1'>
+                        <span class='hot' >热门留言</span>
+                        <span class='prev' @click='prevPage'>上一页</span>    
+                        <span class='prev' style='color: chocolate;border: none;'>{{page + 1}}</span>    
+                        <span class='next' @click='nextPage'>下一页</span>    
+                    </p>
+                    <ul>
+                        <li class='comments-list' v-for='list,index in comments' :key='index'>
+                            <img class='left' :src='list.user.avatarUrl'></img>
+                            <div class='right'>
+                                <p class='admin'>{{list.user.nickname}}</p>
+                                <p class='text'>{{list.content}}</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            `,
+            computed: {
+                comments(){return store.comments},
+                page(){return store.commentPage}
+            },
+            methods:{
+                prevPage(){
+                    if(!this.page)return
+                    let page = this.page
+                    Axios.get(`/comment/hot?type=0&id=${store.musicId}&offset=${--page *30}` ).then(response => {
+                        store.comments=response.hotComments
+                        store.commentPage = page
+                    })
+                },
+                nextPage(){
+                    let page = this.page
+                    Axios.get(`/comment/hot?type=0&id=${store.musicId}&offset=${++page *30}`).then(response => {
+                        if(!response.hotComments.length)return;
+                        store.comments=response.hotComments
+                        store.commentPage = page
+                    })
+                }
+            },
+        })
+        Vue.component('lyric',{
+            template:`
+                <div class='lyric' @click='showpalyer($event)' ref='lyric' scrollTop =100>
+                    <div class="container">
+                        <div class="show" ref='showDiv' v-if='data[0].msg'>
+                            <p class='active'>{{data[0].text}}</p>
+                        </div>
+                        <div class="show" ref='showDiv' v-else>
+                            <p v-for='v,i in data' :key='i'
+                            :class='{active:currentNow === i}'
+                            @click='setTime(v.time)'>{{v.text}}</p>
+                        </div>
+                    </div>
+                </div>
+            `,
+            computed: {
+                data(){return store.lyricData},
+                currentNow(){return store.currentNow},
+            },
+            methods:{
+                showpalyer(e){
+                    e.target.nodeName != "P" && e.target.className != "container" && (store.showLyric=false)
+                },
+                setTime(time){
+                    store.audio.currentTime=time + 0.1
+                }
+            },
+            mounted(){
+                store.setLyricTop=(v)=>{
+                    let heigth = this.$refs.showDiv.offsetHeight / this.data.length
+                    this.$refs.lyric.scrollTop= v * heigth 
+                }
+            },
+        })
+        Vue.component('zl-main',{
+            template:`
+                <div class='main'>
+                    <songs></songs>
+                    <palyer v-show='!showlyric'></palyer>
+                    <lyric v-show='showlyric'></lyric>
+                    <comment ></comment>
+                </div>
+            `,
+            computed: {
+                showlyric(){return store.showLyric}
+            }
+        })
+        Vue.component('zl-footer',{
+            template:`
+                <footer>
+                    <audio :src=url controls autoplay  class="myaudio" 
+                    @play="paly" @pause="pause" ref='audio' @timeupdate="updateTime"
+                    @ended='musicEnd'
+                    ></audio>
+                    <div class="video_con" v-show="mvUrl">
+                        <video ref='video' :src="mvUrl" controls autoplay @mouseenter='close=false'
+                        @mouseleave='close=true'
+                        ></video>
+                        <div class="mask" @click="closeMv"></div>
+                        <div :class="['shutoff',{transparen:close}]" @click='closeMv'></div>
+                    </div>
+                </footer>
+            `,
+            computed: {
+                url(){return store.url},
+                mvUrl(){return store.mvUrl},
+                data(){return store.lyricData},
+                close:{
+                    get(){return store.close},
+                    set(v){store.close = v}
+                }
+            },
+            methods:{   
+                paly(){
+                    store.isPaly=true
+                },
+                pause(){
+                    store.isPaly=false
+                },
+                closeMv(){
+                    store.mvUrl=''
+                },
+                updateTime(){
+                    let now = this.$refs.audio.currentTime
+                    let flag = false
+                    if(now <this.data[0].time){
+                        return store.setLyricTop(0)
+                    }
+                    store.currentNow = this.data.length-1
+                    this.data.forEach((e, i) => {
+                        if(flag)return
+                        if(i === this.data.length-1){
+                            return store.setLyricTop(this.data.length-4)
+                        }
+                        if (e.time  <= now && now <= this.data[i+1].time ) {
+                            i > 4 && store.setLyricTop(i -4)
+                            store.currentNow = i
+                            flag = true
+                        }
+                    });
+                },
+                musicEnd(){
+                    store.setLyricTop(0)
+                    store.currentNow = 0
+                    this.$refs.audio.play()
+                }
+            },
+            mounted() {
+                store.audio = this.$refs.audio
+            },
+        })
+        const vm=new Vue({
+            el:'#app',
+            computed: {
+                isPaly(){return store.isPaly}
+            },
+            watch: {
+                isPaly(v){
+                    setTimeout(()=>{
+                        store.rotateFlag=v
+                    },1000)
+                }
+            },
+        });
+        function formatLyric(text) {
+            let lyric = []
+            let arr = text.split("\n"); //原歌词文本已经换好行了方便很多，我们直接通过换行符“\n”进行切割
+            for (let i = 0; i < arr.length-1; i++) {
+                let temp_arr = arr[i].split("]"); //我们可以通过“]”对时间和文本进行分离
+                let text = temp_arr.pop(); //把歌词文本从数组中剔除出来，获取到歌词文本了！
+                let time=temp_arr[0].slice(2).split(":")
+                time = (time[0] * 60) + +time[1]
+                text && lyric.push({time,text})
+            }
+            lyric.sort((a,b)=>a.time - b.time); //由于不同时间的相同歌词我们给排到一起了，所以这里要以时间顺序重新排列一下
+            return lyric
+        }
+        
+   </script>
+</body>
+
+</html>
